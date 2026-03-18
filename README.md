@@ -38,10 +38,6 @@ It learns to predict part-indicative colors while reconstructing geometry, and u
     pip install --upgrade Pillow
     ```
 
-3. If want to train
-    ```sh
-    pip install pytorch_lightning
-    ```
 
 ### Pretrained Weights
 
@@ -81,38 +77,6 @@ The checkpoints of **Interactive part-segmentation**, **Full segmentation** and 
         --img ./data_toolkit/assets/full_seg_w_2d_map/2d_map.png \
         --export_glb ./data_toolkit/assets/output.glb \
         --two_d_map
-    ```
-
-## 🔥 Training
-
-### Data preparation
-
- - `data_toolkit/example_interactive_seg.py`: **Interactive part-segmentation**
- - `data_toolkit/example_full_seg.py`: **Full segmentation**
- - `data_toolkit/example_full_seg_w_2d_map.py`: **Full segmentation with 2D guidance**
-
-### Running training
-
-- **Interactive part-segmentation**
-    ```sh
-    python train_interactive.py \
-        --dataset_path ./data_toolkit/assets/interactive_seg/dataset.json \
-        --ckpts_path path/to/ckpts_interactive_seg
-    ```
-
-- **Full segmentation**
-
-    ```sh
-    python train_full.py \
-        --dataset_path ./data_toolkit/assets/full_seg/dataset.json \
-        --ckpts_path path/to/ckpts_full_seg
-    ```
-
-- **Full segmentation with 2D guidance**
-    ```sh
-    python train_full.py \
-        --dataset_path ./data_toolkit/assets/full_seg_w_2d_map/dataset.json \
-        --ckpts_path path/to/ckpts_full_seg_w_2d_map
     ```
 
 ## ⚖️ License
