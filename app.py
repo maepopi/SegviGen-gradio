@@ -96,10 +96,29 @@ def _ensure_texture_visuals(asset):
     return asset
 
 
+def _ensure_pbr_materials(asset):
+    """Convert SimpleMaterial to PBRMaterial (required by o_voxel)."""
+    if not isinstance(asset, trimesh.Scene):
+        return asset
+    for name, geom in asset.geometry.items():
+        mat = getattr(getattr(geom, 'visual', None), 'material', None)
+        if isinstance(mat, trimesh.visual.material.SimpleMaterial):
+            pbr = trimesh.visual.material.PBRMaterial()
+            if mat.image is not None:
+                img = mat.image if isinstance(mat.image, Image.Image) else Image.fromarray(mat.image)
+                pbr.baseColorTexture = img
+            else:
+                c = np.array(mat.diffuse, dtype=np.uint8)
+                pbr.baseColorFactor = c if len(c) == 4 else np.append(c[:3], 255).astype(np.uint8)
+            geom.visual.material = pbr
+    return asset
+
+
 def process_glb_to_vxz(glb_path, vxz_path):
     asset = trimesh.load(glb_path, force='scene')
     asset = preprocess_scene_textures(asset)
     asset = _ensure_texture_visuals(asset)
+    asset = _ensure_pbr_materials(asset)
     aabb = asset.bounding_box.bounds
     center = (aabb[0] + aabb[1]) / 2
     scale = 0.99999 / (aabb[1] - aabb[0]).max()

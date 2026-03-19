@@ -37,8 +37,8 @@ On top of the standard SegviGen environment, this fork requires:
 # Build o_voxel from the TRELLIS.2 source (includes cumesh + flex_gemm)
 pip install path/to/TRELLIS.2/o-voxel --no-build-isolation
 
-# bpy 4.0.0 is unavailable on PyPI; use 4.1.0 instead (API-compatible)
-pip install bpy==4.1.0 --extra-index-url https://download.blender.org/pypi/
+# bpy 4.1.0 does not exist; 4.0.0 is the latest available wheel
+pip install bpy==4.0.0 --extra-index-url https://download.blender.org/pypi/
 
 # Gradio 6.x (already pulled in by TRELLIS.2 setup)
 pip install gradio==6.0.1
@@ -67,6 +67,7 @@ Checkpoints are available on [Hugging Face](https://huggingface.co/fenghora/Segv
 ### Bug fixes included
 
 - `ColorVisuals → TextureVisuals` conversion before voxelization, so GLBs with vertex/flat colors work correctly
+- `SimpleMaterial → PBRMaterial` conversion before voxelization, so GLBs with non-PBR materials no longer raise an `AssertionError` in o_voxel
 - `pipeline.json` resolved via `huggingface_hub` instead of a hardcoded relative path
 - Gradio 6.x compatibility (`css=` and `theme=` removed from `gr.Blocks`)
 
@@ -109,6 +110,29 @@ It learns to predict part-indicative colors while reconstructing geometry, and u
     sudo apt-get install -y libsm6 libxrender1 libxext6
     pip install --upgrade Pillow
     ```
+
+    > **`mathutils` build failure on Python 3.10** — `mathutils` 5.1.0 uses two Python 3.12+ APIs
+    > that are absent in 3.10, causing the wheel build to fail. Apply the following patches to the
+    > downloaded source before installing:
+    >
+    > ```sh
+    > pip download mathutils==5.1.0 --no-deps -d /tmp/mathutils_src/
+    > cd /tmp && tar -xzf mathutils_src/mathutils-5.1.0.tar.gz && cd mathutils-5.1.0
+    >
+    > # 1. PyLong_AsInt was added in Python 3.12; replace with (int)PyLong_AsLong
+    > sed -i 's/PyLong_AsInt(/(int)PyLong_AsLong(/g' \
+    >     src/generic/py_capi_utils.hh src/generic/py_capi_utils.cc
+    >
+    > # 2. _PyArg_CheckPositional is a static inline in Python < 3.13; guard the re-declaration
+    > sed -i 's|^int _PyArg_CheckPositional.*|#if PY_VERSION_HEX >= 0x030d0000\n&\n#endif|' \
+    >     src/generic/python_compat.hh
+    > sed -i 's|^/\* Removed in Python 3\.13\. \*/|&\n#if PY_VERSION_HEX >= 0x030d0000|' \
+    >     src/generic/python_compat.cc
+    > printf '\n#endif /* PY_VERSION_HEX >= 0x030d0000 */\n' >> src/generic/python_compat.cc
+    >
+    > sudo apt-get install -y libeigen3-dev
+    > pip install . --no-build-isolation
+    > ```
 
 
 ### Pretrained Weights
