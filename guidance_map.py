@@ -160,7 +160,7 @@ def _gemini_generate_segmentation(
     description: Dict[str, Any],
     color_table: Dict[str, str],
     api_key: str,
-    model: str = "gemini-2.0-flash-preview-image-generation",
+    model: str = "gemini-2.0-flash-exp-image-generation",
     image_size: Tuple[int, int] = (512, 512),
     bg_color_hex: str = "#ffffff",
 ) -> Image.Image:
@@ -232,7 +232,7 @@ def run_pixmesh(
     transforms_path: str,
     gemini_api_key: str,
     analyze_model: str = "gemini-2.0-flash",
-    generate_model: str = "gemini-2.0-flash-preview-image-generation",
+    generate_model: str = "gemini-2.0-flash-exp-image-generation",
     resolution: int = 512,
     bg_color: Tuple[int, int, int] = (255, 255, 255),
 ) -> Tuple[str, Dict[str, Any]]:

@@ -1340,9 +1340,9 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                     )
                     gmap_generate_model = gr.Dropdown(
                         choices=[
-                            "gemini-2.0-flash-preview-image-generation",
+                            "gemini-2.0-flash-exp-image-generation",
                         ],
-                        value="gemini-2.0-flash-preview-image-generation",
+                        value="gemini-2.0-flash-exp-image-generation",
                         label="Generate model (segmentation step)",
                         info="Image-generation model used to flood-fill the parts.",
                     )
