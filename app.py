@@ -1297,10 +1297,10 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
             # ── Pixmesh 2D render controls ───────────────────────────────
             with gr.Column(visible=True) as _pixmesh_col:
                 gr.Markdown(
-                    "**How it works:** Renders one isometric view of your model → "
-                    "sends it to a VLM to identify parts → assigns each part a unique "
-                    "solid color → asks an image-gen model to flood-fill the view → "
-                    "outputs the flat-color image as your guidance map."
+                    "**How it works:** Renders one or more views of your model → "
+                    "sends them to a VLM to identify parts → assigns each part a unique "
+                    "solid color → asks an image-gen model to flood-fill each view → "
+                    "outputs the flat-color image (or grid) as your guidance map."
                 )
                 with gr.Row():
                     gmap_glb = gr.Textbox(
@@ -1312,7 +1312,7 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                         label="Transforms JSON",
                         value=DEFAULT_TRANSFORMS,
                         placeholder="data_toolkit/transforms.json",
-                        info="Camera positions. The first entry is used as the main view.",
+                        info="Used only in Single-view mode for the main camera position.",
                     )
                 with gr.Row():
                     gmap_gemini_key = gr.Textbox(
@@ -1324,8 +1324,44 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                     gmap_resolution = gr.Slider(
                         256, 1024, value=512, step=128,
                         label="Render resolution (px)",
-                        info="Resolution of the rendered view and the output guidance map.",
+                        info="Resolution per view tile. Grid output = cols × resolution wide.",
                     )
+
+                # ── View mode ─────────────────────────────────────────────
+                gmap_mode = gr.Radio(
+                    choices=["Single view", "Multi-view grid"],
+                    value="Single view",
+                    label="View mode",
+                    info="Single: one isometric view from transforms.json. "
+                         "Grid: 2–6 canonical views assembled into a grid.",
+                )
+
+                with gr.Column(visible=False) as _grid_col:
+                    gr.Markdown(
+                        "**Grid mode:** renders each selected view separately, generates "
+                        "a segmented image per view in parallel, then stitches them into "
+                        "a single flat-color grid PNG to feed into Tab 3."
+                    )
+                    with gr.Row():
+                        gmap_view_front  = gr.Checkbox(value=True,  label="Front")
+                        gmap_view_back   = gr.Checkbox(value=True,  label="Back")
+                        gmap_view_left   = gr.Checkbox(value=True,  label="Left")
+                        gmap_view_right  = gr.Checkbox(value=True,  label="Right")
+                        gmap_view_top    = gr.Checkbox(value=False, label="Top")
+                        gmap_view_bottom = gr.Checkbox(value=False, label="Bottom")
+                    gmap_grid_cols = gr.Slider(
+                        1, 3, value=2, step=1,
+                        label="Grid columns",
+                        info="Number of columns in the stitched output grid.",
+                    )
+
+                # Show/hide grid controls when mode changes
+                gmap_mode.change(
+                    fn=lambda m: gr.update(visible=(m == "Multi-view grid")),
+                    inputs=gmap_mode,
+                    outputs=_grid_col,
+                )
+
                 with gr.Accordion("Model selection", open=False):
                     gmap_analyze_model = gr.Dropdown(
                         choices=[
@@ -1343,8 +1379,7 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                         ],
                         value="gemini-2.5-flash",
                         label="Analyze model (describe step)",
-                        info="VLM used to identify parts from the rendered view. "
-                             "Pro/Opus give more detailed part trees; Flash/Haiku are faster.",
+                        info="VLM used to identify parts. Pro/Opus = more detail; Flash/Haiku = faster.",
                     )
                     gmap_generate_model = gr.Dropdown(
                         choices=[
@@ -1373,11 +1408,26 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                 variant="secondary",
             )
 
-            def _run_pixmesh(glb_input, glb_override, transforms, key,
-                             analyze_model, generate_model, resolution):
+            def _run_pixmesh(
+                glb_input, glb_override, transforms, key,
+                analyze_model, generate_model, resolution,
+                mode,
+                v_front, v_back, v_left, v_right, v_top, v_bottom,
+                grid_cols,
+            ):
                 path = glb_override.strip() if glb_override and glb_override.strip() else glb_input
                 if not path:
                     raise gr.Error("No GLB path — upload a model or enter a path.")
+
+                selected_views = tuple(
+                    v for v, checked in zip(
+                        gmap.CANONICAL_VIEW_NAMES,
+                        [v_front, v_back, v_left, v_right, v_top, v_bottom],
+                    ) if checked
+                )
+                if mode == "Multi-view grid" and not selected_views:
+                    raise gr.Error("Select at least one view for grid mode.")
+
                 out_path, description = gmap.run_pixmesh(
                     glb_path=path,
                     transforms_path=transforms,
@@ -1385,6 +1435,9 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                     analyze_model=analyze_model,
                     generate_model=generate_model,
                     resolution=int(resolution),
+                    mode="grid" if mode == "Multi-view grid" else "single",
+                    grid_views=selected_views,
+                    grid_cols=int(grid_cols),
                 )
                 return out_path, out_path, description
 
@@ -1396,6 +1449,10 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                     input_model, gmap_glb, gmap_transforms,
                     gmap_gemini_key, gmap_analyze_model, gmap_generate_model,
                     gmap_resolution,
+                    gmap_mode,
+                    gmap_view_front, gmap_view_back, gmap_view_left,
+                    gmap_view_right, gmap_view_top, gmap_view_bottom,
+                    gmap_grid_cols,
                 ],
                 outputs=[gmap_output, _gmap_img_state, gmap_json_out],
             )

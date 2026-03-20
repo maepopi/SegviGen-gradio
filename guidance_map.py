@@ -7,21 +7,27 @@ the 3D model is painted a unique solid color.  Feed the result into the
 Implemented methods
 -------------------
 - ``run_pixmesh`` : Pixmesh 2D render
-    Render one isometric view → VLM describe → assign Kelly palette →
-    image-gen model flood-fills each part → save as PNG.
+    Single-view or multi-view grid mode.
+
+    Single: render main isometric view → VLM describe → generate segmented image.
+    Grid:   render N canonical views → describe grid → generate per-view in
+            parallel → assemble segmented grid → save as single PNG.
 """
 
 from __future__ import annotations
 
 import base64
+import concurrent.futures
 import copy
 import json
+import math
 import tempfile
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import requests
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # ── Kelly 22-color palette ─────────────────────────────────────────────────
 _KELLY_PALETTE: List[str] = [
@@ -32,17 +38,190 @@ _KELLY_PALETTE: List[str] = [
     "#0000FF", "#00FF00",
 ]
 
+# Canonical view names in display order
+CANONICAL_VIEW_NAMES: List[str] = ["front", "back", "left", "right", "top", "bottom"]
+
+# POV occlusion hints: parts whose names contain an opposite-face keyword are
+# likely hidden in that view.  Ported from MeshAgenticSegmenterVisual.
+_POV_OWN: Dict[str, set] = {
+    "front":  {"front"},
+    "back":   {"back"},
+    "left":   {"left"},
+    "right":  {"right"},
+    "top":    {"top", "upper", "roof"},
+    "bottom": {"bottom", "base", "floor", "foot", "feet", "lower"},
+}
+_POV_OPP: Dict[str, set] = {
+    "front":  {"back"},
+    "back":   {"front"},
+    "left":   {"right"},
+    "right":  {"left"},
+    "top":    {"bottom", "base", "floor", "foot", "feet", "lower"},
+    "bottom": {"top", "upper", "roof"},
+}
+
+
+# ── Camera utilities ───────────────────────────────────────────────────────
+
+def _look_at_matrix(
+    eye: Tuple[float, float, float],
+    target: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    world_up: Tuple[float, float, float] = (0.0, 0.0, 1.0),
+) -> List[List[float]]:
+    """Compute a Blender camera-to-world 4×4 matrix.
+
+    Blender cameras look down their local -Z axis.
+    Columns of the returned matrix are [right | up | back | position].
+    """
+    eye    = np.array(eye,      dtype=float)
+    target = np.array(target,   dtype=float)
+    wup    = np.array(world_up, dtype=float)
+
+    forward = target - eye
+    forward /= np.linalg.norm(forward)
+
+    # Degenerate: forward nearly parallel to world_up → switch fallback
+    if abs(np.dot(forward, wup)) > 0.999:
+        wup = np.array([0.0, 1.0, 0.0])
+
+    right = np.cross(forward, wup)
+    right /= np.linalg.norm(right)
+
+    up   = np.cross(right, forward)   # guaranteed unit
+    back = -forward                   # camera local Z = back
+
+    return [
+        [right[0], up[0], back[0], eye[0]],
+        [right[1], up[1], back[1], eye[1]],
+        [right[2], up[2], back[2], eye[2]],
+        [0.0,      0.0,   0.0,    1.0   ],
+    ]
+
+
+# Camera distance after BpyRenderer scene normalization (~unit cube at origin)
+_CAM_DIST = 2.0
+
+def _canonical_cameras() -> Dict[str, List[List[float]]]:
+    """Return camera-to-world matrices for the 6 canonical orthographic views."""
+    D = _CAM_DIST
+    return {
+        "front":  _look_at_matrix([ 0,  -D,   0], world_up=(0, 0, 1)),
+        "back":   _look_at_matrix([ 0,   D,   0], world_up=(0, 0, 1)),
+        "left":   _look_at_matrix([-D,   0,   0], world_up=(0, 0, 1)),
+        "right":  _look_at_matrix([ D,   0,   0], world_up=(0, 0, 1)),
+        "top":    _look_at_matrix([ 0,   0,   D], world_up=(0, 1, 0)),
+        "bottom": _look_at_matrix([ 0,   0,  -D], world_up=(0, 1, 0)),
+    }
+
+
+# ── Rendering ─────────────────────────────────────────────────────────────
+
+def _render_views_bpy(
+    glb_path: str,
+    view_cameras: Dict[str, List[List[float]]],
+    resolution: int = 512,
+) -> Dict[str, Image.Image]:
+    """Load the GLB once then render from every camera matrix.
+
+    Reuses BpyRenderer internals to avoid reloading the scene for each view.
+    """
+    import bpy
+    from data_toolkit.bpy_render import BpyRenderer
+
+    renderer = BpyRenderer(resolution=resolution, engine="CYCLES")
+    renderer.init_render_settings()
+    renderer.init_scene()
+    renderer.load_object(glb_path)
+    renderer.normalize_scene()
+    cam = renderer.init_camera()
+    renderer.init_lighting()
+    # Match the FOV used by the existing conditioning renders (transforms.json)
+    cam.data.lens = 16 / math.tan(0.698 / 2)
+
+    results: Dict[str, Image.Image] = {}
+    for view_name, matrix in view_cameras.items():
+        renderer.set_camera_from_matrix(cam, matrix)
+        bpy.context.view_layer.update()
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            out_path = f.name
+        bpy.context.scene.render.filepath = out_path
+        bpy.ops.render.render(write_still=True)
+        results[view_name] = Image.open(out_path).convert("RGB")
+        print(f"  rendered {view_name} → {out_path}")
+
+    return results
+
+
+def _render_main_view(
+    glb_path: str,
+    transforms_path: str,
+    resolution: int = 512,
+) -> Image.Image:
+    """Render the first camera in transforms.json (main 3Q isometric view)."""
+    with open(transforms_path) as f:
+        t = json.load(f)[0]
+    matrix = t["transform_matrix"]
+    results = _render_views_bpy(glb_path, {"main": matrix}, resolution)
+    return results["main"]
+
+
+# ── Grid assembly ──────────────────────────────────────────────────────────
+
+def _assemble_grid(
+    images: Dict[str, Image.Image],
+    view_order: List[str],
+    cols: int,
+    tile_size: int = 512,
+    add_labels: bool = True,
+) -> Image.Image:
+    """Stitch per-view images into a rows×cols grid with optional view labels."""
+    present = [v for v in view_order if v in images]
+    rows = math.ceil(len(present) / cols)
+    grid = Image.new("RGB", (cols * tile_size, rows * tile_size), (255, 255, 255))
+
+    for idx, name in enumerate(present):
+        tile = images[name].resize((tile_size, tile_size), Image.LANCZOS)
+        row, col = divmod(idx, cols)
+        x, y = col * tile_size, row * tile_size
+        grid.paste(tile, (x, y))
+
+        if add_labels:
+            draw = ImageDraw.Draw(grid)
+            label = name.upper()
+            draw.rectangle([x + 2, y + 2, x + len(label) * 7 + 6, y + 16], fill=(0, 0, 0))
+            draw.text((x + 4, y + 3), label, fill=(255, 255, 255))
+
+    return grid
+
+
+# ── POV visibility ─────────────────────────────────────────────────────────
+
+def _compute_pov_visibility(
+    color_table: Dict[str, str],
+) -> Dict[str, Dict[str, List[str]]]:
+    """Infer visible/occluded part lists per view from part name keywords.
+
+    Ported from MeshAgenticSegmenterVisual._compute_pov_visibility.
+    """
+    result: Dict[str, Dict[str, List[str]]] = {
+        v: {"visible": [], "occluded": []} for v in CANONICAL_VIEW_NAMES
+    }
+    for part_name in color_table:
+        words = set(part_name.lower().split())
+        for view in CANONICAL_VIEW_NAMES:
+            if words & _POV_OPP[view]:
+                result[view]["occluded"].append(part_name)
+            else:
+                result[view]["visible"].append(part_name)
+    return result
+
 
 # ── Shared utilities ───────────────────────────────────────────────────────
 
 def _assign_palette(
     description: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], Dict[str, str]]:
-    """Assign Kelly palette colors to every leaf part in the assembly tree.
-
-    Returns ``(updated_description, color_table)`` where ``color_table`` maps
-    part name → hex color string.
-    """
+    """Assign Kelly palette colors to every leaf part in the assembly tree."""
     updated = copy.deepcopy(description)
     parts_ordered: List[str] = []
     for obj in updated.get("objects", []):
@@ -56,7 +235,6 @@ def _assign_palette(
         name: _KELLY_PALETTE[i % len(_KELLY_PALETTE)]
         for i, name in enumerate(parts_ordered)
     }
-    # Write assigned colors back into the JSON so prompts are self-consistent.
     for obj in updated.get("objects", []):
         for group in obj.get("assembly_tree", []):
             for part in group.get("parts", []):
@@ -73,44 +251,34 @@ def _img_to_b64(image: Image.Image, fmt: str = "PNG") -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
-# ── Pixmesh 2D render — step implementations ──────────────────────────────
-
-def _render_main_view(
-    glb_path: str,
-    transforms_path: str,
-    resolution: int = 512,
-) -> Image.Image:
-    """Render the first camera in transforms.json via BpyRenderer.
-
-    This reuses the same rendering path used by the Full Segmentation tab
-    for its conditioning image (the 3Q isometric view).
-    """
-    from data_toolkit.bpy_render import render_from_transforms
-
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        render_path = f.name
-    render_from_transforms(
-        file_path=glb_path,
-        transforms_json_path=transforms_path,
-        output_path=render_path,
-        resolution=resolution,
-    )
-    return Image.open(render_path).convert("RGB")
-
+# ── Gemini API calls ───────────────────────────────────────────────────────
 
 def _gemini_describe(
     image: Image.Image,
     api_key: str,
     model: str = "gemini-2.5-flash",
+    is_grid: bool = False,
 ) -> Dict[str, Any]:
-    """Send the rendered view to a Gemini text model; parse and return the JSON assembly tree."""
+    """Send one image (single view or assembled grid) to a Gemini text model."""
+    view_context = (
+        "a grid showing the object from multiple canonical angles "
+        "(front, back, left, right, top, bottom)"
+        if is_grid else
+        "an isometric view of the object"
+    )
     system_prompt = (
-        "Senior 3D Product Analyst. "
-        "Return a SINGLE valid JSON object. No markdown fences, no extra text."
+        "### ROLE\n"
+        "Senior 3D Product Analyst and Mechanical Design Expert.\n\n"
+        "### OBJECTIVES\n"
+        "1. VISUALLY INSPECT all views to identify every distinct component.\n"
+        "2. FAVOUR DETAIL: list every part you can visually distinguish.\n"
+        "3. GENERATE the most complete assembly tree possible.\n\n"
+        "### OUTPUT FORMAT\n"
+        "Return a SINGLE valid JSON object. No markdown fences, no extra text.\n"
     )
     user_prompt = (
-        "Analyze the 3D object in the image and decompose it into its constituent parts.\n\n"
-        "Return this exact JSON structure:\n"
+        f"You will receive {view_context}.\n\n"
+        "Decompose the object into its constituent parts and return this JSON:\n"
         "{\n"
         '  "scene_description": "<max 5 words>",\n'
         '  "language": "en",\n'
@@ -126,7 +294,10 @@ def _gemini_describe(
         "}\n\n"
         "Rules:\n"
         "1. List every visually-distinct part as a SEPARATE entry.\n"
-        "2. Repeated instances get unique positional names (e.g. 'Leg Front Left').\n"
+        "   Only merge when two regions are truly INDISTINGUISHABLE.\n"
+        "2. REPEATED INSTANCES get unique positional names "
+        "   (e.g. 'Leg Front Left', 'Leg Front Right', 'Leg Back Left', 'Leg Back Right').\n"
+        "   NEVER group multiple physical instances under one name.\n"
         "3. Short names only (max 3 words, no color adjectives).\n"
         "4. Do NOT hallucinate parts not visible in the image."
     )
@@ -163,34 +334,47 @@ def _gemini_generate_segmentation(
     model: str = "gemini-3-pro-image-preview",
     image_size: Tuple[int, int] = (512, 512),
     bg_color_hex: str = "#ffffff",
+    view_name: str = "main",
+    pov_visibility: Optional[Dict[str, List[str]]] = None,
 ) -> Image.Image:
-    """Send the rendered view + palette to a Gemini image-gen model.
-
-    Returns the flat-color segmented image.
-    """
+    """Generate a flat-color segmented image for one view."""
     W, H = image_size
     n_colors = len(color_table)
-    color_table_str = "\n".join(
-        f"  {name} → {hex_c}" for name, hex_c in color_table.items()
-    )
+
+    # Filter color table to parts expected to be visible in this view
+    if pov_visibility and view_name in pov_visibility:
+        vis  = pov_visibility[view_name]["visible"]
+        occ  = pov_visibility[view_name]["occluded"]
+        visible_ct = {n: c for n, c in color_table.items() if n in vis} or color_table
+    else:
+        vis, occ = list(color_table.keys()), []
+        visible_ct = color_table
+
+    n_visible = len(visible_ct)
+    color_table_str = "\n".join(f"  {n} → {c}" for n, c in visible_ct.items())
+    vis_str = ", ".join(f"{p} ({visible_ct[p]})" for p in vis if p in visible_ct) or "—"
+    occ_str = ", ".join(occ) or "—"
     json_str = json.dumps(description, indent=2, ensure_ascii=False)
 
     prompt = (
-        "You are a 3D Segmentation Colorist performing a STRICT flat-color recoloring task.\n\n"
-        f"## VIEW\nMain isometric view of a 3D object. Image size: {W}×{H} px.\n\n"
-        "## JSON ASSEMBLY TREE (for reference only)\n"
+        "You are an expert 3D Segmentation Colorist performing a STRICT, PURE RECOLORING task.\n\n"
+        f"## VIEW: {view_name.upper()} — Image size: {W}×{H} px\n\n"
+        f"Parts visible from this angle: {vis_str}\n"
+        f"Parts occluded (DO NOT PAINT THESE): {occ_str}\n\n"
+        "## JSON ASSEMBLY TREE (reference only)\n"
         f"```json\n{json_str}\n```\n\n"
-        f"## COLOR TABLE — use ONLY these exact hex codes\n"
+        f"## COLOR TABLE — ONLY these {n_visible} hex codes are allowed\n"
         f"{color_table_str}\n\n"
-        f"Hard limit: at most {n_colors} distinct part colors in the output.\n\n"
+        f"Hard limit: at most {n_visible} distinct part colors in the output.\n\n"
         "## RULES\n"
         f"1. Output must be exactly {W}×{H} px — no cropping, no padding.\n"
         f"2. Background ({bg_color_hex}) is NOT a part — leave all background pixels untouched.\n"
         "3. Flood-fill each enclosed region with its single flat hex color.\n"
-        "   ONE region = ONE color. No gradients, no outlines, no contour lines in output.\n"
+        "   ONE region = ONE color. No gradients, no outlines, no contour lines.\n"
         "4. Object silhouette must be pixel-accurate to the input.\n"
         "5. Do NOT invent new part boundaries or sub-regions.\n"
-        f"6. Use ONLY the {n_colors} hex codes above — no other colors are permitted."
+        f"6. Use ONLY the {n_visible} hex codes listed above — no other colors.\n"
+        f"7. If a part is not visible in the {view_name.upper()} view, do NOT paint it."
     )
 
     img_b64 = _img_to_b64(image)
@@ -233,38 +417,111 @@ def run_pixmesh(
     gemini_api_key: str,
     analyze_model: str = "gemini-2.5-flash",
     generate_model: str = "gemini-3-pro-image-preview",
+    mode: str = "single",               # "single" | "grid"
+    grid_views: Tuple[str, ...] = ("front", "back", "left", "right"),
+    grid_cols: int = 2,
     resolution: int = 512,
     bg_color: Tuple[int, int, int] = (255, 255, 255),
 ) -> Tuple[str, Dict[str, Any]]:
-    """Pixmesh 2D render pipeline: render → describe → generate → save.
+    """Pixmesh pipeline.  Returns ``(guidance_map_path, assembly_tree_dict)``.
 
-    Returns ``(guidance_map_path, assembly_tree_dict)``.
+    mode="single":
+        Renders the main 3Q view from transforms.json, describes it, generates
+        one segmented image.
+
+    mode="grid":
+        Renders each view in ``grid_views`` from canonical camera positions,
+        assembles a grid for the describe step (full-object context), then
+        generates each view's segmentation in parallel and stitches the results
+        into a single grid PNG.
     """
     if not gemini_api_key or not gemini_api_key.strip():
         raise ValueError("A Gemini API key is required for the Pixmesh method.")
 
-    print("Pixmesh [1/3]: rendering main view …")
-    rendered = _render_main_view(glb_path, transforms_path, resolution=resolution)
+    bg_hex = "#%02x%02x%02x" % bg_color
 
-    print("Pixmesh [2/3]: describing mesh …")
-    description = _gemini_describe(rendered, gemini_api_key, model=analyze_model)
+    # ── Single-view mode ──────────────────────────────────────────────────
+    if mode == "single":
+        print("Pixmesh single [1/3]: rendering main view …")
+        rendered = _render_main_view(glb_path, transforms_path, resolution=resolution)
+
+        print("Pixmesh single [2/3]: describing mesh …")
+        description = _gemini_describe(rendered, gemini_api_key, model=analyze_model)
+        print(f"  → {description.get('scene_description', '?')}")
+
+        updated_desc, color_table = _assign_palette(description)
+        print(f"  → {len(color_table)} parts: {', '.join(color_table.keys())}")
+
+        print("Pixmesh single [3/3]: generating segmentation …")
+        seg_image = _gemini_generate_segmentation(
+            rendered, updated_desc, color_table,
+            api_key=gemini_api_key, model=generate_model,
+            image_size=(resolution, resolution), bg_color_hex=bg_hex,
+            view_name="main",
+        )
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            out_path = f.name
+        seg_image.save(out_path)
+        print(f"Pixmesh single: done → {out_path}")
+        return out_path, updated_desc
+
+    # ── Grid mode ─────────────────────────────────────────────────────────
+    cameras = _canonical_cameras()
+    selected = {v: cameras[v] for v in grid_views if v in cameras}
+    if not selected:
+        raise ValueError(f"No valid views in grid_views={grid_views}.")
+
+    print(f"Pixmesh grid [1/3]: rendering {len(selected)} views …")
+    view_images = _render_views_bpy(glb_path, selected, resolution=resolution)
+
+    # Assemble a labelled grid for the describe step
+    describe_grid = _assemble_grid(
+        view_images, list(grid_views), cols=grid_cols,
+        tile_size=resolution, add_labels=True,
+    )
+
+    print("Pixmesh grid [2/3]: describing mesh from grid …")
+    description = _gemini_describe(
+        describe_grid, gemini_api_key, model=analyze_model, is_grid=True,
+    )
     print(f"  → {description.get('scene_description', '?')}")
 
     updated_desc, color_table = _assign_palette(description)
     print(f"  → {len(color_table)} parts: {', '.join(color_table.keys())}")
 
-    print("Pixmesh [3/3]: generating segmentation image …")
-    bg_hex = "#%02x%02x%02x" % bg_color
-    seg_image = _gemini_generate_segmentation(
-        rendered, updated_desc, color_table,
-        api_key=gemini_api_key,
-        model=generate_model,
-        image_size=(resolution, resolution),
-        bg_color_hex=bg_hex,
+    pov_visibility = _compute_pov_visibility(color_table)
+
+    print(f"Pixmesh grid [3/3]: generating segmentation for {len(view_images)} views (parallel) …")
+
+    def _gen_view(view_name, img):
+        print(f"  [{view_name}] generating …")
+        seg = _gemini_generate_segmentation(
+            img, updated_desc, color_table,
+            api_key=gemini_api_key, model=generate_model,
+            image_size=(resolution, resolution), bg_color_hex=bg_hex,
+            view_name=view_name, pov_visibility=pov_visibility,
+        )
+        print(f"  [{view_name}] done.")
+        return view_name, seg
+
+    segmented: Dict[str, Image.Image] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {
+            pool.submit(_gen_view, vn, img): vn
+            for vn, img in view_images.items()
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            vn, seg = fut.result()
+            segmented[vn] = seg
+
+    # Assemble segmented grid (no labels — clean output for SegviGen)
+    seg_grid = _assemble_grid(
+        segmented, list(grid_views), cols=grid_cols,
+        tile_size=resolution, add_labels=False,
     )
 
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
         out_path = f.name
-    seg_image.save(out_path)
-    print(f"Pixmesh: done → {out_path}")
+    seg_grid.save(out_path)
+    print(f"Pixmesh grid: done → {out_path}")
     return out_path, updated_desc
