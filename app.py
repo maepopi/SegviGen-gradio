@@ -1329,20 +1329,29 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                 with gr.Accordion("Model selection", open=False):
                     gmap_analyze_model = gr.Dropdown(
                         choices=[
-                            "gemini-2.0-flash",
-                            "gemini-2.5-flash-preview-04-17",
-                            "gemini-2.5-pro-preview-05-06",
+                            "gemini-2.5-flash",
+                            "gemini-2.5-pro",
+                            "gemini-3-flash-preview",
+                            "gemini-3-pro-preview",
+                            "gemini-3.1-pro-preview",
+                            "claude-sonnet-4-6",
+                            "claude-opus-4-6",
+                            "claude-haiku-4-5",
+                            "gpt-4o",
+                            "gpt-5-mini",
+                            "gpt-5.2",
                         ],
-                        value="gemini-2.0-flash",
+                        value="gemini-2.5-flash",
                         label="Analyze model (describe step)",
                         info="VLM used to identify parts from the rendered view. "
-                             "Pro gives more detailed part trees; Flash is faster.",
+                             "Pro/Opus give more detailed part trees; Flash/Haiku are faster.",
                     )
                     gmap_generate_model = gr.Dropdown(
                         choices=[
-                            "gemini-2.0-flash-exp-image-generation",
+                            "gemini-3-pro-image-preview",
+                            "gemini-3-pro-preview",
                         ],
-                        value="gemini-2.0-flash-exp-image-generation",
+                        value="gemini-3-pro-image-preview",
                         label="Generate model (segmentation step)",
                         info="Image-generation model used to flood-fill the parts.",
                     )

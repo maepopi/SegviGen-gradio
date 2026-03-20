@@ -101,7 +101,7 @@ def _render_main_view(
 def _gemini_describe(
     image: Image.Image,
     api_key: str,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
 ) -> Dict[str, Any]:
     """Send the rendered view to a Gemini text model; parse and return the JSON assembly tree."""
     system_prompt = (
@@ -160,7 +160,7 @@ def _gemini_generate_segmentation(
     description: Dict[str, Any],
     color_table: Dict[str, str],
     api_key: str,
-    model: str = "gemini-2.0-flash-exp-image-generation",
+    model: str = "gemini-3-pro-image-preview",
     image_size: Tuple[int, int] = (512, 512),
     bg_color_hex: str = "#ffffff",
 ) -> Image.Image:
@@ -231,8 +231,8 @@ def run_pixmesh(
     glb_path: str,
     transforms_path: str,
     gemini_api_key: str,
-    analyze_model: str = "gemini-2.0-flash",
-    generate_model: str = "gemini-2.0-flash-exp-image-generation",
+    analyze_model: str = "gemini-2.5-flash",
+    generate_model: str = "gemini-3-pro-image-preview",
     resolution: int = 512,
     bg_color: Tuple[int, int, int] = (255, 255, 255),
 ) -> Tuple[str, Dict[str, Any]]:
