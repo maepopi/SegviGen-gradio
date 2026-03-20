@@ -26,6 +26,7 @@ from trellis2.modules.image_feature_extractor import DinoV3FeatureExtractor
 
 import gradio as gr
 import split as splitter
+import guidance_map as gmap
 
 # ─── Global model cache ────────────────────────────────────────────────────────
 _loaded_models = {}
@@ -1273,6 +1274,127 @@ with gr.Blocks(title="SegviGen — 3D Part Segmentation") as demo:
                 fn=run_split,
                 inputs=[t_seg_state] + list(t_split_ctrl.values()),
                 outputs=t_parts_model,
+            )
+
+        # ────────────────────────────────────────────────────────────────────
+        # TAB 4 — Prepare 2D Guidance Map
+        # ────────────────────────────────────────────────────────────────────
+        with gr.Tab("Prepare 2D Guidance Map"):
+            gr.Markdown(
+                "### Prepare a 2D guidance map for Tab 3\n"
+                "Generate a flat-color segmented image from your 3D model. "
+                "Each part gets a unique solid color — use the output as the "
+                "**2D Guidance Map** input in the *Full Segmentation + 2D Guidance Map* tab."
+            )
+
+            gmap_method = gr.Radio(
+                choices=["Pixmesh 2D render"],
+                value="Pixmesh 2D render",
+                label="Method",
+                info="More methods can be added here.",
+            )
+
+            # ── Pixmesh 2D render controls ───────────────────────────────
+            with gr.Column(visible=True) as _pixmesh_col:
+                gr.Markdown(
+                    "**How it works:** Renders one isometric view of your model → "
+                    "sends it to a VLM to identify parts → assigns each part a unique "
+                    "solid color → asks an image-gen model to flood-fill the view → "
+                    "outputs the flat-color image as your guidance map."
+                )
+                with gr.Row():
+                    gmap_glb = gr.Textbox(
+                        label="GLB path",
+                        placeholder="Path to your .glb file (or use the Input Model above)",
+                        info="If left empty, the Input Model above is used.",
+                    )
+                    gmap_transforms = gr.Textbox(
+                        label="Transforms JSON",
+                        value=DEFAULT_TRANSFORMS,
+                        placeholder="data_toolkit/transforms.json",
+                        info="Camera positions. The first entry is used as the main view.",
+                    )
+                with gr.Row():
+                    gmap_gemini_key = gr.Textbox(
+                        label="Gemini API key",
+                        type="password",
+                        placeholder="AIza…",
+                        info="Required. Get one at aistudio.google.com/apikey",
+                    )
+                    gmap_resolution = gr.Slider(
+                        256, 1024, value=512, step=128,
+                        label="Render resolution (px)",
+                        info="Resolution of the rendered view and the output guidance map.",
+                    )
+                with gr.Accordion("Model selection", open=False):
+                    gmap_analyze_model = gr.Dropdown(
+                        choices=[
+                            "gemini-2.0-flash",
+                            "gemini-2.5-flash-preview-04-17",
+                            "gemini-2.5-pro-preview-05-06",
+                        ],
+                        value="gemini-2.0-flash",
+                        label="Analyze model (describe step)",
+                        info="VLM used to identify parts from the rendered view. "
+                             "Pro gives more detailed part trees; Flash is faster.",
+                    )
+                    gmap_generate_model = gr.Dropdown(
+                        choices=[
+                            "gemini-2.0-flash-preview-image-generation",
+                        ],
+                        value="gemini-2.0-flash-preview-image-generation",
+                        label="Generate model (segmentation step)",
+                        info="Image-generation model used to flood-fill the parts.",
+                    )
+
+            gmap_run = gr.Button("Generate 2D Guidance Map", variant="primary")
+
+            with gr.Row():
+                gmap_output = gr.Image(
+                    label="Generated guidance map",
+                    type="filepath",
+                    interactive=False,
+                )
+                with gr.Column():
+                    gr.Markdown("**Assembly tree** (identified parts)")
+                    gmap_json_out = gr.JSON(label=None)
+
+            gmap_use_btn = gr.Button(
+                "→ Use this map as guidance input in Tab 3",
+                variant="secondary",
+            )
+
+            def _run_pixmesh(glb_input, glb_override, transforms, key,
+                             analyze_model, generate_model, resolution):
+                path = glb_override.strip() if glb_override and glb_override.strip() else glb_input
+                if not path:
+                    raise gr.Error("No GLB path — upload a model or enter a path.")
+                out_path, description = gmap.run_pixmesh(
+                    glb_path=path,
+                    transforms_path=transforms,
+                    gemini_api_key=key,
+                    analyze_model=analyze_model,
+                    generate_model=generate_model,
+                    resolution=int(resolution),
+                )
+                return out_path, out_path, description
+
+            _gmap_img_state = gr.State(None)
+
+            gmap_run.click(
+                fn=_run_pixmesh,
+                inputs=[
+                    input_model, gmap_glb, gmap_transforms,
+                    gmap_gemini_key, gmap_analyze_model, gmap_generate_model,
+                    gmap_resolution,
+                ],
+                outputs=[gmap_output, _gmap_img_state, gmap_json_out],
+            )
+
+            gmap_use_btn.click(
+                fn=lambda p: p,
+                inputs=_gmap_img_state,
+                outputs=t_guidance_img,
             )
 
     gr.Markdown(
