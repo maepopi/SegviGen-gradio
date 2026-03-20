@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SegviGen — 3D Part Segmentation</title>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+
+<!-- ─── Header ─────────────────────────────────────────────────────────────── -->
+<header class="app-header">
+  <div class="header-inner">
+    <h1 class="app-title">SegviGen</h1>
+    <span class="app-subtitle">3D Part Segmentation</span>
+  </div>
+</header>
+
+<!-- ─── Main layout ────────────────────────────────────────────────────────── -->
+<div class="app-layout">
+
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-section">
+      <p class="sidebar-label">Input Model</p>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="modelFile" accept=".glb,.obj,.ply" hidden>
+        <div class="upload-icon">⬆</div>
+        <p class="upload-hint">Drop GLB / OBJ / PLY<br>or click to browse</p>
+        <p class="upload-filename" id="uploadFilename"></p>
+      </div>
+    </div>
+    <div class="sidebar-section">
+      <p class="sidebar-label">Mode</p>
+      <nav class="tab-nav">
+        <button class="tab-btn active" data-tab="interactive">Interactive</button>
+        <button class="tab-btn" data-tab="full">Full</button>
+        <button class="tab-btn" data-tab="full2d">Full + 2D Map</button>
+        <button class="tab-btn" data-tab="guidance">Prepare 2D Map</button>
+      </nav>
+    </div>
+    <div class="sidebar-footer">
+      <p>Base models cached on first run.<br>Checkpoints cached per path.</p>
+    </div>
+  </nav>
+
+  <!-- Content area -->
+  <main class="content">
+
+    <!-- ── TAB: Interactive ──────────────────────────────────────────────── -->
+    <section class="tab-panel active" id="tab-interactive">
+      <div class="panel-header">
+        <h2>Interactive Part Segmentation</h2>
+        <p class="panel-desc">Click a voxel coordinate (x y z, 0–511 grid) to isolate a single part.</p>
+      </div>
+
+      <div class="inputs-grid">
+        <label class="field">
+          <span>Checkpoint (.ckpt)</span>
+          <input type="text" id="i-ckpt" placeholder="ckpt/interactive_seg.ckpt">
+        </label>
+        <label class="field">
+          <span>Transforms JSON</span>
+          <input type="text" id="i-transforms" value="data_toolkit/transforms.json">
+        </label>
+        <label class="field">
+          <span>Override rendered image (optional)</span>
+          <div class="file-input-row">
+            <input type="text" id="i-rendered-img" placeholder="path/to/image.png" readonly>
+            <button class="btn-sm" onclick="pickFile('i-rendered-img', '.png')">Browse</button>
+            <input type="file" id="i-rendered-img-picker" accept=".png" hidden>
+          </div>
+        </label>
+        <label class="field field-wide">
+          <span>Voxel click points (x y z per point, up to 10)</span>
+          <input type="text" id="i-points" value="388 448 392" placeholder="388 448 392   256 256 256">
+        </label>
+      </div>
+
+      <div class="run-row">
+        <button class="btn-primary" id="i-run-btn" onclick="runInteractive()">Run Interactive Segmentation</button>
+        <div class="job-status" id="i-status"></div>
+      </div>
+
+      <div class="viewers-row">
+        <div class="viewer-card">
+          <div class="viewer-label">Segmented Output</div>
+          <canvas class="babylon-canvas" id="i-canvas-seg"></canvas>
+          <div class="viewer-overlay" id="i-overlay-seg"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.i.segPath, 'segmented.glb')">Download GLB</button>
+          </div>
+        </div>
+        <div class="viewer-card">
+          <div class="viewer-label">Split Parts Output</div>
+          <canvas class="babylon-canvas" id="i-canvas-parts"></canvas>
+          <div class="viewer-overlay" id="i-overlay-parts"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.i.partsPath, 'parts.glb')">Download GLB</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="params-row">
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Sampler &amp; Export Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applyPreset('i','fast')">⚡ Fast</button>
+              <button class="btn-preset btn-preset-primary" onclick="applyPreset('i','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applyPreset('i','quality')">✨ Quality</button>
+            </div>
+            <div id="i-sampler-fields"></div>
+          </div>
+        </div>
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Split Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applySplitPreset('i','max_parts')">🔪 Max Parts</button>
+              <button class="btn-preset btn-preset-primary" onclick="applySplitPreset('i','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applySplitPreset('i','cleanest')">✨ Cleanest</button>
+            </div>
+            <div id="i-split-fields"></div>
+            <button class="btn-secondary mt-8" onclick="runSplit('i')">Split into Parts</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Full Segmentation ─────────────────────────────────────────── -->
+    <section class="tab-panel" id="tab-full">
+      <div class="panel-header">
+        <h2>Full Segmentation</h2>
+        <p class="panel-desc">Automatically segments all parts, conditioned on a rendered view.</p>
+      </div>
+
+      <div class="inputs-grid">
+        <label class="field">
+          <span>Checkpoint (.ckpt)</span>
+          <input type="text" id="f-ckpt" placeholder="ckpt/full_seg.ckpt">
+        </label>
+        <label class="field">
+          <span>Transforms JSON</span>
+          <input type="text" id="f-transforms" value="data_toolkit/transforms.json">
+        </label>
+        <label class="field">
+          <span>Override rendered image (optional)</span>
+          <div class="file-input-row">
+            <input type="text" id="f-rendered-img" placeholder="path/to/image.png" readonly>
+            <button class="btn-sm" onclick="pickFile('f-rendered-img', '.png')">Browse</button>
+            <input type="file" id="f-rendered-img-picker" accept=".png" hidden>
+          </div>
+        </label>
+      </div>
+
+      <div class="run-row">
+        <button class="btn-primary" id="f-run-btn" onclick="runFull()">Run Full Segmentation</button>
+        <div class="job-status" id="f-status"></div>
+      </div>
+
+      <div class="viewers-row">
+        <div class="viewer-card">
+          <div class="viewer-label">Segmented Output</div>
+          <canvas class="babylon-canvas" id="f-canvas-seg"></canvas>
+          <div class="viewer-overlay" id="f-overlay-seg"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.f.segPath, 'segmented.glb')">Download GLB</button>
+          </div>
+        </div>
+        <div class="viewer-card">
+          <div class="viewer-label">Split Parts Output</div>
+          <canvas class="babylon-canvas" id="f-canvas-parts"></canvas>
+          <div class="viewer-overlay" id="f-overlay-parts"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.f.partsPath, 'parts.glb')">Download GLB</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="params-row">
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Sampler &amp; Export Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applyPreset('f','fast')">⚡ Fast</button>
+              <button class="btn-preset btn-preset-primary" onclick="applyPreset('f','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applyPreset('f','quality')">✨ Quality</button>
+            </div>
+            <div id="f-sampler-fields"></div>
+          </div>
+        </div>
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Split Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applySplitPreset('f','max_parts')">🔪 Max Parts</button>
+              <button class="btn-preset btn-preset-primary" onclick="applySplitPreset('f','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applySplitPreset('f','cleanest')">✨ Cleanest</button>
+            </div>
+            <div id="f-split-fields"></div>
+            <button class="btn-secondary mt-8" onclick="runSplit('f')">Split into Parts</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Full + 2D Map ─────────────────────────────────────────────── -->
+    <section class="tab-panel" id="tab-full2d">
+      <div class="panel-header">
+        <h2>Full Segmentation + 2D Guidance Map</h2>
+        <p class="panel-desc">Upload a flat-color 2D map (unique solid color per part) to steer segmentation.</p>
+      </div>
+
+      <div class="inputs-grid">
+        <label class="field">
+          <span>Checkpoint (.ckpt)</span>
+          <input type="text" id="t-ckpt" placeholder="ckpt/full_seg_w_2d_map.ckpt">
+        </label>
+        <label class="field">
+          <span>2D Guidance Map (PNG)</span>
+          <div class="file-input-row">
+            <input type="text" id="t-guidance-img" placeholder="path/to/guidance_map.png" readonly>
+            <button class="btn-sm" onclick="pickFile('t-guidance-img', '.png', 't-guidance-preview')">Browse</button>
+            <input type="file" id="t-guidance-img-picker" accept=".png,.jpg" hidden>
+          </div>
+        </label>
+        <div class="field guidance-preview-wrap">
+          <span>Preview</span>
+          <img id="t-guidance-preview" class="guidance-preview" alt="No guidance map selected">
+        </div>
+      </div>
+
+      <div class="run-row">
+        <button class="btn-primary" id="t-run-btn" onclick="runFull2D()">Run 2D-Guided Segmentation</button>
+        <div class="job-status" id="t-status"></div>
+      </div>
+
+      <div class="viewers-row">
+        <div class="viewer-card">
+          <div class="viewer-label">Segmented Output</div>
+          <canvas class="babylon-canvas" id="t-canvas-seg"></canvas>
+          <div class="viewer-overlay" id="t-overlay-seg"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.t.segPath, 'segmented.glb')">Download GLB</button>
+          </div>
+        </div>
+        <div class="viewer-card">
+          <div class="viewer-label">Split Parts Output</div>
+          <canvas class="babylon-canvas" id="t-canvas-parts"></canvas>
+          <div class="viewer-overlay" id="t-overlay-parts"><div class="spinner"></div><span>Waiting…</span></div>
+          <div class="viewer-actions">
+            <button class="btn-sm" onclick="downloadFile(state.t.partsPath, 'parts.glb')">Download GLB</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="params-row">
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Sampler &amp; Export Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applyPreset('t','fast')">⚡ Fast</button>
+              <button class="btn-preset btn-preset-primary" onclick="applyPreset('t','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applyPreset('t','quality')">✨ Quality</button>
+            </div>
+            <div id="t-sampler-fields"></div>
+          </div>
+        </div>
+        <div class="accordion">
+          <button class="accordion-btn" onclick="toggleAccordion(this)">
+            Split Parameters <span class="chevron">▾</span>
+          </button>
+          <div class="accordion-body">
+            <div class="presets-row">
+              <span class="presets-label">Presets:</span>
+              <button class="btn-preset" onclick="applySplitPreset('t','max_parts')">🔪 Max Parts</button>
+              <button class="btn-preset btn-preset-primary" onclick="applySplitPreset('t','balanced')">⚖ Balanced</button>
+              <button class="btn-preset" onclick="applySplitPreset('t','cleanest')">✨ Cleanest</button>
+            </div>
+            <div id="t-split-fields"></div>
+            <button class="btn-secondary mt-8" onclick="runSplit('t')">Split into Parts</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── TAB: Prepare 2D Map ────────────────────────────────────────────── -->
+    <section class="tab-panel" id="tab-guidance">
+      <div class="panel-header">
+        <h2>Prepare 2D Guidance Map</h2>
+        <p class="panel-desc">
+          Generate a flat-color segmented image from your 3D model using the Pixmesh pipeline.
+          Use the output as the guidance map in the <em>Full + 2D Map</em> tab.
+        </p>
+      </div>
+
+      <div class="method-badge">Method: Pixmesh 2D Render</div>
+      <p class="method-desc">
+        Renders view(s) → VLM identifies parts → assigns Kelly palette colors →
+        image-gen flood-fills → outputs flat-color PNG.
+      </p>
+
+      <div class="inputs-grid">
+        <label class="field">
+          <span>GLB path override <em>(optional — uses Input Model if blank)</em></span>
+          <input type="text" id="g-glb" placeholder="Leave empty to use uploaded model">
+        </label>
+        <label class="field">
+          <span>Transforms JSON</span>
+          <input type="text" id="g-transforms" value="data_toolkit/transforms.json">
+        </label>
+        <label class="field">
+          <span>Gemini API key</span>
+          <input type="password" id="g-api-key" placeholder="AIza…">
+        </label>
+        <label class="field">
+          <span>Render resolution (px)</span>
+          <div class="slider-row">
+            <input type="range" id="g-resolution" min="256" max="1024" step="128" value="512"
+                   oninput="document.getElementById('g-resolution-val').textContent = this.value">
+            <span id="g-resolution-val">512</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="mode-toggle">
+        <span class="mode-label">View mode:</span>
+        <label class="radio-option">
+          <input type="radio" name="g-mode" value="single" checked onchange="toggleGridControls(this.value)">
+          <span>Single view</span>
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="g-mode" value="grid" onchange="toggleGridControls(this.value)">
+          <span>Multi-view grid</span>
+        </label>
+      </div>
+
+      <div class="grid-controls" id="g-grid-controls" style="display:none">
+        <p class="grid-info">
+          Renders front/back/left/right for the VLM describe step.
+          The selected views below determine which are rendered for the describe context.
+          Final output is always a single clean view from transforms.json.
+        </p>
+        <div class="view-checkboxes">
+          <label class="cb-label"><input type="checkbox" id="g-front" checked> Front</label>
+          <label class="cb-label"><input type="checkbox" id="g-back" checked> Back</label>
+          <label class="cb-label"><input type="checkbox" id="g-left" checked> Left</label>
+          <label class="cb-label"><input type="checkbox" id="g-right" checked> Right</label>
+          <label class="cb-label"><input type="checkbox" id="g-top"> Top</label>
+          <label class="cb-label"><input type="checkbox" id="g-bottom"> Bottom</label>
+        </div>
+        <label class="field">
+          <span>Grid columns</span>
+          <div class="slider-row">
+            <input type="range" id="g-grid-cols" min="1" max="3" step="1" value="2"
+                   oninput="document.getElementById('g-grid-cols-val').textContent = this.value">
+            <span id="g-grid-cols-val">2</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="accordion">
+        <button class="accordion-btn" onclick="toggleAccordion(this)">
+          Model Selection <span class="chevron">▾</span>
+        </button>
+        <div class="accordion-body">
+          <label class="field">
+            <span>Analyze model (describe step)</span>
+            <select id="g-analyze-model">
+              <option value="gemini-2.5-flash" selected>gemini-2.5-flash</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro</option>
+              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview</option>
+              <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
+              <option value="claude-opus-4-6">claude-opus-4-6</option>
+              <option value="claude-haiku-4-5">claude-haiku-4-5</option>
+              <option value="gpt-4o">gpt-4o</option>
+              <option value="gpt-5-mini">gpt-5-mini</option>
+              <option value="gpt-5.2">gpt-5.2</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Generate model (segmentation step)</span>
+            <select id="g-generate-model">
+              <option value="gemini-3-pro-image-preview" selected>gemini-3-pro-image-preview</option>
+              <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="run-row">
+        <button class="btn-primary" id="g-run-btn" onclick="runGuidance()">Generate 2D Guidance Map</button>
+        <div class="job-status" id="g-status"></div>
+      </div>
+
+      <div class="guidance-output-row" id="g-output-row" style="display:none">
+        <div class="guidance-result-img-wrap">
+          <p class="viewer-label">Generated guidance map</p>
+          <img id="g-output-img" class="guidance-result-img" alt="">
+          <div class="guidance-result-actions">
+            <button class="btn-sm" onclick="downloadFile(state.g.imagePath, 'guidance_map.png')">Download PNG</button>
+            <button class="btn-primary btn-sm" onclick="useAsGuidance()">→ Use in Full + 2D Map tab</button>
+          </div>
+        </div>
+        <div class="guidance-result-json-wrap">
+          <p class="viewer-label">Assembly tree (identified parts)</p>
+          <pre id="g-output-json" class="json-viewer"></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
