@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Field, TextInput } from '../ui/Field'
 import { SegTab } from './SegTab'
 import type { SamplerParams } from '../SamplerFields'
@@ -8,6 +9,13 @@ const DEFAULT_CKPT       = 'ckpt/full_seg.ckpt'
 interface Props { glbPath?: string | null }
 
 export function FullTab({ glbPath }: Props) {
+  const [glb,        setGlb]        = useState(glbPath ?? '')
+  const [ckpt,       setCkpt]       = useState(DEFAULT_CKPT)
+  const [transforms, setTransforms] = useState(DEFAULT_TRANSFORMS)
+  const [img,        setImg]        = useState('')
+
+  useEffect(() => { setGlb(glbPath ?? '') }, [glbPath])
+
   return (
     <SegTab
       title="Full Segmentation"
@@ -15,32 +23,30 @@ export function FullTab({ glbPath }: Props) {
       runEndpoint="/api/jobs/full"
       runLabel="Run Full Segmentation"
       buildParams={(sampler: SamplerParams) => ({
-        glb_path:        (document.getElementById('f-glb')        as HTMLInputElement)?.value || glbPath || '',
-        ckpt_path:       (document.getElementById('f-ckpt')       as HTMLInputElement)?.value || DEFAULT_CKPT,
-        transforms_path: (document.getElementById('f-transforms') as HTMLInputElement)?.value || DEFAULT_TRANSFORMS,
-        rendered_img:    (document.getElementById('f-img')        as HTMLInputElement)?.value || null,
+        glb_path:        glb,
+        ckpt_path:       ckpt,
+        transforms_path: transforms,
+        rendered_img:    img || null,
         ...sampler,
       })}
-      extraInputs={<FullInputs glbPath={glbPath} />}
+      extraInputs={
+        <>
+          <Field label="GLB path">
+            <TextInput value={glb} onChange={e => setGlb(e.target.value)}
+              placeholder="Leave empty to use uploaded model" />
+          </Field>
+          <Field label="Checkpoint (.ckpt)">
+            <TextInput value={ckpt} onChange={e => setCkpt(e.target.value)} />
+          </Field>
+          <Field label="Transforms JSON">
+            <TextInput value={transforms} onChange={e => setTransforms(e.target.value)} />
+          </Field>
+          <Field label="Override rendered image (optional)">
+            <TextInput value={img} onChange={e => setImg(e.target.value)}
+              placeholder="path/to/image.png" />
+          </Field>
+        </>
+      }
     />
-  )
-}
-
-function FullInputs({ glbPath }: Props) {
-  return (
-    <>
-      <Field label="GLB path">
-        <TextInput id="f-glb" placeholder="Leave empty to use uploaded model" defaultValue={glbPath ?? ''} />
-      </Field>
-      <Field label="Checkpoint (.ckpt)">
-        <TextInput id="f-ckpt" defaultValue={DEFAULT_CKPT} />
-      </Field>
-      <Field label="Transforms JSON">
-        <TextInput id="f-transforms" defaultValue={DEFAULT_TRANSFORMS} />
-      </Field>
-      <Field label="Override rendered image (optional)">
-        <TextInput id="f-img" placeholder="path/to/image.png" />
-      </Field>
-    </>
   )
 }

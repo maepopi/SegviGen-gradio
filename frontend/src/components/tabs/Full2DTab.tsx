@@ -20,6 +20,12 @@ interface Props {
 }
 
 export function Full2DTab({ glbPath, initialGuidancePath }: Props) {
+  // ── Segmentation GLB path (synced with uploaded model) ────────────────────
+  const [segGlb,        setSegGlb]        = useState(glbPath ?? '')
+  const [segCkpt,       setSegCkpt]       = useState(DEFAULT_CKPT)
+
+  useEffect(() => { setSegGlb(glbPath ?? '') }, [glbPath])
+
   // ── Guidance generation state ──────────────────────────────────────────────
   const [glbOverride,   setGlbOverride]   = useState('')
   const [transforms,    setTransforms]    = useState('data_toolkit/transforms.json')
@@ -87,10 +93,11 @@ export function Full2DTab({ glbPath, initialGuidancePath }: Props) {
   const segInputs = (
     <>
       <Field label="GLB path">
-        <TextInput id="t-glb" placeholder="Leave empty to use uploaded model" defaultValue={glbPath ?? ''} />
+        <TextInput value={segGlb} onChange={e => setSegGlb(e.target.value)}
+          placeholder="Leave empty to use uploaded model" />
       </Field>
       <Field label="Checkpoint (.ckpt)">
-        <TextInput id="t-ckpt" defaultValue={DEFAULT_CKPT} />
+        <TextInput value={segCkpt} onChange={e => setSegCkpt(e.target.value)} />
       </Field>
       <Field label="2D Guidance Map">
         <div className="flex gap-2">
@@ -242,8 +249,8 @@ export function Full2DTab({ glbPath, initialGuidancePath }: Props) {
           runEndpoint="/api/jobs/full_2d"
           runLabel="Run 2D-Guided Segmentation"
           buildParams={(sampler: SamplerParams) => ({
-            glb_path:    (document.getElementById('t-glb')  as HTMLInputElement)?.value || glbPath || '',
-            ckpt_path:   (document.getElementById('t-ckpt') as HTMLInputElement)?.value || DEFAULT_CKPT,
+            glb_path:     segGlb,
+            ckpt_path:    segCkpt,
             guidance_img: guidancePath ?? '',
             ...sampler,
           })}
