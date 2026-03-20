@@ -2,74 +2,212 @@
 
 ---
 
-## 🖥️ This Fork — Gradio Web UI
+## 🖥️ This Fork — Web Application
 
-This fork adds a **Gradio-based web interface** (`app.py`) that wraps all three SegviGen segmentation methods in an interactive browser UI.
+This fork replaces the original CLI workflow with a **full-stack web application**: a FastAPI backend exposing a job-based API, and a React + TypeScript frontend with interactive 3D viewers.
 It was built with the assistance of **[Claude](https://claude.ai)** (Anthropic).
 
-### What this fork adds
+---
 
-| | |
+## Technical Stack
+
+### Backend
+| Component | Technology |
 |---|---|
-| `app.py` | Full Gradio app exposing all three segmentation methods |
-| `.gitignore` | Excludes checkpoints, caches, and build artifacts |
-| README section | This section |
+| API server | **FastAPI** + **Uvicorn** |
+| Job system | Python `threading` — daemon threads, in-memory job store |
+| ML inference | **PyTorch** — all three segmentation models |
+| 3D rendering | **Blender** (headless, via subprocess) — renders GLB views for Pixmesh |
+| Guidance pipeline | **Gemini API** — VLM describe step + image generation (flat-color segmentation map) |
+| 3D I/O | **trimesh**, **Open3D** |
+| Data validation | **Pydantic** v2 |
 
-### Features of the Gradio UI
+### Frontend
+| Component | Technology |
+|---|---|
+| Framework | **React 18** + **TypeScript** |
+| Build tool | **Vite** |
+| Styling | **Tailwind CSS** v3 (custom dark theme) |
+| 3D viewer | **`<model-viewer>`** (Google web component) |
+| Icons | **Lucide React** |
+| HTTP | Native `fetch` |
 
-- **Input 3D model viewer** — upload any GLB file and preview it interactively in the browser
-- **Three segmentation tabs**, one per method:
-  - **Interactive Part Segmentation** — specify 3D voxel click points (x y z, up to 10) to isolate a single part
-  - **Full Segmentation** — automatically segment all parts conditioned on a rendered view
-  - **Full Segmentation + 2D Guidance Map** — control part granularity by uploading a 2D semantic map (unique color per part)
-- **All parameters exposed** per method:
-  - Sampler: steps, rescale T, guidance strength (CFG), guidance rescale, guidance interval
-  - Export: decimation target, texture size, remesh on/off, remesh band, remesh project
-- **Output 3D model viewer** — the segmented GLB renders directly in the browser
-- **Automatic checkpoint detection** — checkpoint paths in `ckpt/` are pre-filled at startup
-- **Model caching** — TRELLIS.2-4B base models and segmentation checkpoints load once and are reused across runs
+### Architecture
+```
+Browser (Vite dev :5173 / or FastAPI static)
+    │  /api/*
+    ▼
+FastAPI :7860
+    ├── POST /api/upload        → save to temp file, return path
+    ├── GET  /api/files         → serve any file by path
+    ├── POST /api/jobs/*        → spawn thread → return job_id
+    └── GET  /api/jobs/{id}     → poll status / result
+            │
+            ├── inference.py      (PyTorch segmentation)
+            └── guidance_map.py   (Blender render → Gemini → PNG)
+```
 
-### Installation notes for this fork
+---
 
-On top of the standard SegviGen environment, this fork requires:
+## 🚀 Installation
+
+### Prerequisites
+- **System**: Linux
+- **GPU**: NVIDIA GPU with at least 12 GB VRAM
+- **Python**: 3.10 (3.12 not supported — `bpy` 4.x has no wheels for it)
+- **Node.js**: 18+ (for frontend development only)
+
+### 1. Set up the Python environment
+
+Follow the standard SegviGen installation (see below), then install additional dependencies:
 
 ```sh
-# Build o_voxel from the TRELLIS.2 source (includes cumesh + flex_gemm)
-pip install path/to/TRELLIS.2/o-voxel --no-build-isolation
-
-# bpy 4.1.0 does not exist; 4.0.0 is the latest available wheel
+pip install fastapi uvicorn[standard] python-multipart
 pip install bpy==4.0.0 --extra-index-url https://download.blender.org/pypi/
-
-# Gradio 6.x (already pulled in by TRELLIS.2 setup)
-pip install gradio==6.0.1
+pip install google-genai   # for Pixmesh guidance map generation
 ```
 
-> **Python version:** use Python 3.11. Python 3.12 is not supported — `bpy` 4.x has no wheels for it.
+> **`mathutils` build failure on Python 3.10** — see the patch instructions in the Installation section below.
 
-### Running the UI
+### 2. Place checkpoints
 
-```sh
-conda activate trellis2   # or your equivalent Python 3.11 env
-python app.py
-# → http://localhost:7860
 ```
-
-Place your checkpoints in `ckpt/` following the naming convention:
-
-| File | Method |
-|------|--------|
-| `ckpt/interactive_seg.ckpt` | Interactive Part Segmentation |
-| `ckpt/full_seg.ckpt` | Full Segmentation |
-| `ckpt/full_seg_w_2d_map.ckpt` | Full Segmentation + 2D Guidance |
+ckpt/
+├── interactive_seg.ckpt      ← Interactive Part Segmentation
+├── full_seg.ckpt             ← Full Segmentation
+└── full_seg_w_2d_map.ckpt    ← Full Segmentation + 2D Guidance
+```
 
 Checkpoints are available on [Hugging Face](https://huggingface.co/fenghora/SegviGen).
 
-### Bug fixes included
+### 3. (Optional) Build the frontend
 
-- `ColorVisuals → TextureVisuals` conversion before voxelization, so GLBs with vertex/flat colors work correctly
-- `SimpleMaterial → PBRMaterial` conversion before voxelization, so GLBs with non-PBR materials no longer raise an `AssertionError` in o_voxel
+The `static/` directory already contains a pre-built frontend. To rebuild from source:
+
+```sh
+cd frontend
+npm install
+npm run build   # outputs to ../static/
+```
+
+---
+
+## 📖 Usage
+
+### Starting the server
+
+```sh
+conda activate trellis2   # or your Python 3.10 env
+uvicorn server:app --host 0.0.0.0 --port 7860
+# → Open http://localhost:7860
+```
+
+### Development mode (hot-reload)
+
+Run both processes in separate terminals:
+
+```sh
+# Terminal 1 — backend
+uvicorn server:app --host 0.0.0.0 --port 7860 --reload
+
+# Terminal 2 — frontend dev server
+cd frontend
+npm run dev
+# → Open http://localhost:5173
+```
+
+---
+
+## 🗂️ UI Overview
+
+### Sidebar
+- **Input Model** — drag-and-drop or click to upload a GLB / OBJ / PLY file. A live 3D preview appears immediately. The uploaded model path is automatically propagated to every tab.
+
+### Tab: Interactive Part Segmentation
+Isolate a single part by specifying one or more 3D voxel click coordinates.
+
+| Field | Description |
+|---|---|
+| GLB path | Auto-filled from the uploaded model |
+| Checkpoint | Path to `interactive_seg.ckpt` |
+| Transforms JSON | Camera definition for the rendered view |
+| Override rendered image | Optional — skip rendering and supply your own PNG |
+| Voxel click points | Space-separated `x y z` triplets (0–511 grid), up to 10 points |
+
+1. Upload your model in the sidebar.
+2. Enter the voxel coordinate(s) of the part you want to isolate.
+3. Adjust sampler parameters if needed (Steps, CFG, etc.).
+4. Click **Run Interactive Segmentation**.
+5. Once done, click **Split into Parts** to export each segment as a separate mesh.
+
+### Tab: Full Segmentation
+Automatically segments all parts at once, conditioned on a rendered view.
+
+| Field | Description |
+|---|---|
+| GLB path | Auto-filled from the uploaded model |
+| Checkpoint | Path to `full_seg.ckpt` |
+| Transforms JSON | Camera definition used to render the conditioning view |
+| Override rendered image | Optional — supply your own conditioning PNG |
+
+1. Upload your model.
+2. Click **Run Full Segmentation**.
+3. Optionally click **Split into Parts**.
+
+### Tab: Full + 2D Map
+Combines guidance map generation and 2D-guided segmentation in one place.
+
+#### Step 1 — Generate Guidance Map *(expandable)*
+Uses the **Pixmesh** pipeline: renders canonical views with Blender, sends them to a VLM (Gemini) for part description, assigns a Kelly-palette color per part, then uses an image-generation model to flood-fill a flat-color PNG.
+
+| Field | Description |
+|---|---|
+| GLB path override | Leave empty to use the uploaded model |
+| Transforms JSON | Camera for the main conditioning view |
+| Gemini API key | Required — `AIza…` key from Google AI Studio |
+| Render resolution | 256–1024 px |
+| View mode | **Single** (main view only) or **Multi-view grid** (4 canonical views for VLM describe, main view for output) |
+| Analyze model | VLM used for the describe step |
+| Generate model | Image-generation model used for the flood-fill step |
+
+When generation completes, the result image is shown and automatically pre-fills the guidance path in Step 2.
+
+#### Step 2 — Run Segmentation
+| Field | Description |
+|---|---|
+| GLB path | Auto-filled from the uploaded model |
+| Checkpoint | Path to `full_seg_w_2d_map.ckpt` |
+| 2D Guidance Map | Auto-filled from Step 1, or browse to upload your own PNG |
+
+1. Expand **Step 1** and generate a guidance map (requires Gemini API key), **or** browse to supply your own flat-color PNG.
+2. Click **Run 2D-Guided Segmentation**.
+3. Optionally click **Split into Parts**.
+
+### Sampler & Split parameters
+All tabs expose two collapsible parameter panels:
+
+**Sampler & Export Parameters**
+- Steps, Rescale T, CFG strength, CFG rescale, CFG interval
+- Decimation target, texture size, remesh on/off, remesh band, remesh project
+
+**Split Parameters**
+- Controls how the segmented mesh is split into individual part files
+
+---
+
+## 🐛 Bug fixes included
+
+- `ColorVisuals → TextureVisuals` conversion before voxelization — GLBs with vertex/flat colors work correctly
+- `SimpleMaterial → PBRMaterial` conversion before voxelization — no more `AssertionError` in o_voxel
 - `pipeline.json` resolved via `huggingface_hub` instead of a hardcoded relative path
-- Gradio 6.x compatibility (`css=` and `theme=` removed from `gr.Blocks`)
+- Multiview guidance fix — grid used only for VLM describe step; segmentation image generated from the single `transforms.json` main view to avoid out-of-distribution interference patterns
+
+---
+
+## 🙏 Credits
+
+- **[Dickoah](https://github.com/Dickoah)** — main contributor for the 2D segmentation pipeline (Pixmesh guidance map generation)
+- **[Claude](https://claude.ai)** (Anthropic) — assisted in building the FastAPI backend and React frontend
 
 ---
 
