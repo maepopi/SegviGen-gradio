@@ -32,3 +32,12 @@ flagged/
 .DS_Store
 *.log
 tmp/
+frontend/node_modules/
+frontend/dist/
+*.pyc
+__pycache__/
+*.egg-info/
+.eggs/
+.env
+*.vxz
+
