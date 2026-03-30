@@ -71,7 +71,9 @@ def flow_forward_interactive(self, x, t, cond, concat_cond, point_embeds, coords
 # ─── Sampler (interactive) ─────────────────────────────────────────────────────
 
 class SamplerInteractive:
-    """Flow-matching sampler conditioned on both an image and 3D click points."""
+    """
+    Flow-matching sampler conditioned on both an image and 3D click points.
+    """
 
     def _inference_model(self, model, x_t, tex_slat, shape_slat, input_points, coords_len_list, t, cond):
         t = torch.tensor([t * 1000] * x_t.shape[0], dtype=torch.float32).cuda()
@@ -133,7 +135,9 @@ class SamplerInteractive:
 # ─── Sampler (full / full-2d) ──────────────────────────────────────────────────
 
 class SamplerFull:
-    """Flow-matching sampler conditioned on a single image (no click points)."""
+    """
+    Flow-matching sampler conditioned on a single image (no click points).
+    """
 
     def _inference_model(self, model, x_t, tex_slat, shape_slat, coords_len_list, t, cond):
         t = torch.tensor([t * 1000] * x_t.shape[0], dtype=torch.float32).cuda()
@@ -194,7 +198,9 @@ class SamplerFull:
 # ─── Gen3DSeg model wrappers ────────────────────────────────────────────────────
 
 class Gen3DSegInteractive(nn.Module):
-    """Wraps the TRELLIS.2 flow model for interactive (click-point) segmentation."""
+    """
+    Wraps the TRELLIS.2 flow model for interactive (click-point) segmentation.
+    """
 
     def __init__(self, flow_model):
         super().__init__()
@@ -234,7 +240,9 @@ class Gen3DSegInteractive(nn.Module):
 
 
 class Gen3DSegFull(nn.Module):
-    """Wraps the TRELLIS.2 flow model for full / full-2D segmentation (no click points)."""
+    """
+    Wraps the TRELLIS.2 flow model for full / full-guided segmentation (no click points).
+    """
 
     def __init__(self, flow_model):
         super().__init__()

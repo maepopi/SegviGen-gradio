@@ -13,17 +13,26 @@ Supporting modules
 Quick-start
 -----------
 >>> import segvigen
->>> segvigen.interactive.run(glb_path=..., ckpt_path=..., ...)
->>> segvigen.full.run(glb_path=..., ckpt_path=..., ...)
->>> segvigen.full_guided.run(glb_path=..., ckpt_path=..., ...)
+>>> seg = segvigen.InteractiveSegmenter()
+>>> seg.run(glb_path=..., transforms_path=..., points_str=...)
+>>> seg = segvigen.FullSegmenter()
+>>> seg.run(glb_path=..., transforms_path=...)
+>>> seg = segvigen.FullGuidedSegmenter()
+>>> seg.run(glb_path=..., guidance_img=...)
 """
 
 from segvigen import interactive, full, full_guided
+from segvigen.full import FullSegmenter
+from segvigen.full_guided import FullGuidedSegmenter
+from segvigen.interactive import InteractiveSegmenter
 from segvigen.presets import SAMPLER_PRESETS
 
 __all__ = [
     "interactive",
     "full",
     "full_guided",
+    "FullSegmenter",
+    "FullGuidedSegmenter",
+    "InteractiveSegmenter",
     "SAMPLER_PRESETS",
 ]

@@ -11,7 +11,7 @@ on the texture-encoded color palette.  Main entry-point:
 Guidance Map
 ------------
 Generate a flat-color 2D segmentation map (PNG) using Gemini VLM + image
-generation.  Main entry-point: ``run_pixmesh()``.
+generation.  Main entry-point: ``generate_guidance_map()``.
 """
 
 from __future__ import annotations
@@ -29,11 +29,27 @@ from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
+import rembg
 import requests
 import trimesh
 from PIL import Image, ImageDraw
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
+
+
+# ═════════════════════════════════════════════════════════════════════════════════
+#  BACKGROUND REMOVAL
+# ═════════════════════════════════════════════════════════════════════════════════
+
+_rembg_session = None
+
+
+def remove_bg(image: Image.Image) -> Image.Image:
+    """Remove the background from *image* using the isnet-general-use model."""
+    global _rembg_session
+    if _rembg_session is None:
+        _rembg_session = rembg.new_session("isnet-general-use")
+    return rembg.remove(image.convert("RGB"), session=_rembg_session)
 
 
 # ═════════════════════════════════════════════════════════════════════════════════
@@ -924,7 +940,7 @@ def _gemini_generate_segmentation(
 
 # ── Public entry-point: Pixmesh 2D render ─────────────────────────────────
 
-def run_pixmesh(
+def generate_guidance_map(
     glb_path: str,
     transforms_path: str,
     gemini_api_key: str,

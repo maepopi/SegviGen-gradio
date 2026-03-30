@@ -29,19 +29,24 @@ from pydantic import BaseModel
 
 import segvigen as sgv
 import util
-import rembg
 
-# ─── Background removal (app-level, not part of segvigen) ──────────────────────
+# ─── Segmenter instance registry ───────────────────────────────────────────────
+# Instances are created once per unique checkpoint path and reused across
+# requests.  Models inside each instance are loaded lazily on first use.
 
-_rembg_session = None
+_segmenters: Dict[tuple, Any] = {}
 
-def _remove_bg(image):
-    global _rembg_session
-    if _rembg_session is None:
-        _rembg_session = rembg.new_session("isnet-general-use")
-    return rembg.remove(image.convert("RGB"), session=_rembg_session)
+
+def _get_segmenter(cls, ckpt_path: str):
+    key = (cls, ckpt_path)
+    if key not in _segmenters:
+        _segmenters[key] = cls(ckpt_path=ckpt_path)
+    return _segmenters[key]
 
 # ─── Checkpoint auto-download ──────────────────────────────────────────────────
+# Each segmenter class handles its own checkpoint via _ensure_checkpoint().
+# This block eagerly downloads the default checkpoints at startup so the first
+# request is faster.
 
 _CKPT_DIR = Path(__file__).parent / "ckpt"
 _HF_REPO  = "fenghora/SegviGen"
@@ -238,12 +243,18 @@ class GuidanceParams(BaseModel):
 
 @app.post("/api/jobs/full")
 def start_full(params: FullParams):
-    return _start_job(sgv.full.run, remove_bg_fn=_remove_bg, **params.model_dump())
+    seg = _get_segmenter(sgv.FullSegmenter, params.ckpt_path)
+    p = params.model_dump()
+    p.pop('ckpt_path')
+    return _start_job(seg.run, remove_bg_fn=util.remove_bg, **p)
 
 
 @app.post("/api/jobs/full_2d")
 def start_full_2d(params: Full2DParams):
-    return _start_job(sgv.full_guided.run, remove_bg_fn=_remove_bg, **params.model_dump())
+    seg = _get_segmenter(sgv.FullGuidedSegmenter, params.ckpt_path)
+    p = params.model_dump()
+    p.pop('ckpt_path')
+    return _start_job(seg.run, remove_bg_fn=util.remove_bg, **p)
 
 
 @app.post("/api/jobs/split")
@@ -254,7 +265,7 @@ def start_split(params: SplitParams):
 @app.post("/api/jobs/guidance")
 def start_guidance(params: GuidanceParams):
     def _run():
-        out_path, description = util.run_pixmesh(
+        out_path, description = util.generate_guidance_map(
             glb_path=params.glb_path,
             transforms_path=params.transforms_path,
             gemini_api_key=params.gemini_api_key,

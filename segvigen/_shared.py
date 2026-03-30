@@ -11,20 +11,17 @@ os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import json
-import tempfile
 from collections import OrderedDict
 from types import MethodType
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
-import torch.nn as nn
 import trimesh
 import o_voxel
 from torch.nn import functional as F
 from PIL import Image
 from huggingface_hub import hf_hub_download
-from tqdm import tqdm
 
 import trellis2.modules.sparse as sp
 from trellis2 import models
@@ -210,10 +207,6 @@ def preprocess_image(input: Image.Image, remove_bg_fn=None) -> Image.Image:
         and returns an RGBA image.  When *None* and the image has no alpha
         channel the image is used as-is (no background removal).
     """
-    if input.mode != "RGB":
-        bg = Image.new("RGB", input.size, (255, 255, 255))
-        bg.paste(input, mask=input.split()[3])
-        input = bg
     has_alpha = False
     if input.mode == 'RGBA':
         alpha = np.array(input)[:, :, 3]
@@ -355,7 +348,7 @@ def load_seg_model(ckpt_path: str, mode: str):
     ckpt_path:
         Path to the ``.ckpt`` file downloaded from ``fenghora/SegviGen``.
     mode:
-        ``"interactive"``, ``"full"``, or ``"full_2d"``.
+        ``"interactive"``, ``"full"``, or ``"full_guided"``.
     """
     from segvigen._samplers import Gen3DSegInteractive, Gen3DSegFull, flow_forward_interactive
 
