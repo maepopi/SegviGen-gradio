@@ -97,6 +97,16 @@ bash install.sh
 
 > **Note on Pillow:** `gradio 6.0.1` requires `Pillow < 11` (`HAVE_WEBPANIM` was removed in Pillow 11). The script pins `Pillow>=10,<11` and removes `pillow-simd` if installed by TRELLIS.2.
 
+### Alternative: pip install (library only)
+
+If you already have the TRELLIS.2 CUDA prerequisites (`trellis2`, `o_voxel`, `torch`) installed in your environment, you can install just the `segvigen` Python package:
+
+```sh
+pip install git+https://github.com/maepopi/SegviGen-app
+```
+
+> **Note:** This installs only the `segvigen` package and its PyPI dependencies. It does **not** build the CUDA extensions (`trellis2`, `o_voxel`, etc.) — those must already be present in your environment. If they are missing, `import segvigen` will still work for lightweight usage (e.g. accessing presets), but the segmenter classes will raise a clear `ImportError` when accessed.
+
 ### 2. Place checkpoints
 
 Checkpoints are downloaded automatically by `install.sh`. If you need to download them manually:
