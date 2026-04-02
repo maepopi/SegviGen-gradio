@@ -5,7 +5,6 @@
 ## 🖥️ This Fork — Web Application
 
 This fork replaces the original CLI workflow with a **full-stack web application**: a FastAPI backend exposing a job-based API, and a React + TypeScript frontend with interactive 3D viewers.
-It was built with the assistance of **[Claude](https://claude.ai)** (Anthropic).
 
 ---
 
@@ -186,7 +185,6 @@ npm run dev
 
 - **[SegviGen](https://github.com/Nelipot-Lee/SegviGen)** — original research and codebase by Lin Li, Haoran Feng, Zehuan Huang, Haohua Chen, Wenbo Nie, Shaohua Hou, Keqing Fan, Pan Hu, Sheng Wang, Buyu Li, and Lu Sheng
 - **[Dickoah](https://github.com/Dickoah)** — my dear friend, and main contributor for the 2D segmentation pipeline (guidance map generation)
-- **[Claude](https://claude.ai)** (Anthropic) — assisted in building the FastAPI backend and React frontend
 
 ---
 
